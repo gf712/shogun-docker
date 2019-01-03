@@ -45,7 +45,7 @@ def main(args):
 	path = args.path
 	container_name = args.container[0]
 	# generate name of directory to store results
-	result_path = f"build-{time.time()}" if args.result_path == '' else args.result_path
+	result_path = f"build-{int(time.time())}" if args.result_path == '' else args.result_path
 
 	# docker volumes
 	volumes = {"$HOME/.ccache": {"bind":"/root/.ccache"}, 
@@ -70,25 +70,35 @@ def main(args):
 		if container.name != container_name:
 			container.rename(container_name)
 
+	os.mkdir(result_path)
+
 	# run each cmake config
 	for i, cmake_config in enumerate(CMAKE_CONFIG):
 		print(f"CONFIGURATION {i}")
 
-		os.mkdir(result_path)
+		result_path_i = f"{result_path}/config-{i}"
 
-		write_to_file(os.path.join(result_path, "cmake_config.txt"), [cmake_config, '\n'], 'w')
+		os.mkdir(result_path_i)
+
+		write_to_file(os.path.join(result_path_i, "cmake_config.txt"), [cmake_config, '\n'], 'w')
 		
-		print("Running cmake step")
+		print("Running cmake step", end="", flush=True)
+		start = time.time()
 		cmake_logs = container.exec_run(cmd=f"bash -c '{CMAKE_CMD.format(cmake_config)}'", stream=True)
-		write_to_file(os.path.join(result_path, "cmake_output.txt"), cmake_logs.output, 'wb')
+		write_to_file(os.path.join(result_path_i, "cmake_output.txt"), cmake_logs.output, 'wb')
+		print(f" [time: {time.time() - start:.2f} s]")
 		
-		print("Running build step")
+		print("Running build step", end="", flush=True)
+		start = time.time()
 		build_logs = container.exec_run(cmd=f"bash -c '{BUILD_CMD}'", stream=True)
-		write_to_file(os.path.join(result_path, "build_output.txt"), build_logs.output, 'wb')
+		write_to_file(os.path.join(result_path_i, "build_output.txt"), build_logs.output, 'wb')
+		print(f" [time: {time.time() - start:.2f} s]")
 
-		print("Running valgrind test")
+		print("Running valgrind test", end="", flush=True)
+		start = time.time()
 		valgrind_logs = container.exec_run(cmd=f"bash -c '{VALGRIND_CMD}'", stream=True)
-		write_to_file(os.path.join(result_path, "valgrind_output.txt"), valgrind_logs.output, 'wb')
+		write_to_file(os.path.join(result_path_i, "valgrind_output.txt"), valgrind_logs.output, 'wb')
+		print(f" [time: {time.time() - start:.2f} s]")
 
 if __name__ == '__main__':
 	args = parser.parse_args()
