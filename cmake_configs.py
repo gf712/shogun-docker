@@ -83,11 +83,11 @@ def main(args):
 		write_to_file(os.path.join(result_path, "cmake_output.txt"), cmake_logs.output, 'wb')
 		
 		print("Running build step")
-		build_logs = container.exec_run(cmd=f"bash -c '{BUILD_CMD}'")
+		build_logs = container.exec_run(cmd=f"bash -c '{BUILD_CMD}'", stream=True)
 		write_to_file(os.path.join(result_path, "build_output.txt"), build_logs.output, 'wb')
 
 		print("Running valgrind test")
-		valgrind_logs = container.exec_run(cmd=f"bash -c '{VALGRIND_CMD}'")
+		valgrind_logs = container.exec_run(cmd=f"bash -c '{VALGRIND_CMD}'", stream=True)
 		write_to_file(os.path.join(result_path, "valgrind_output.txt"), valgrind_logs.output, 'wb')
 
 if __name__ == '__main__':
