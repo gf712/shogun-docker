@@ -3,6 +3,7 @@ import argparse
 import docker
 import os
 import time
+from pathlib import Path
 
 # argument parsing
 parser = argparse.ArgumentParser(description=
@@ -29,8 +30,8 @@ VERSION = 0.1
 IMAGE_NAME = f"{NAME}:{VERSION}"
 
 # bash commands
-SETUP_CMD = "mkdir /opt/shogun/build"
-CMAKE_CMD = "cd /opt/shogun/build; cmake -DCMAKE_INSTALL_PREFIX=$HOME/shogun-build -DENABLE_TESTING=ON {} .."
+SETUP_CMD = "mkdir -p /opt/shogun/build"
+CMAKE_CMD = "cd /opt/shogun/build; rm -rf *; cmake -DCMAKE_INSTALL_PREFIX=$HOME/shogun-build -DENABLE_TESTING=ON {} .."
 BUILD_CMD = "cd /opt/shogun/build; make -j4"
 VALGRIND_CMD = "cd /opt/shogun/build; valgrind --leak-check=full bin/shogun-unit-test"
 
@@ -48,7 +49,7 @@ def main(args):
 	result_path = f"build-{int(time.time())}" if args.result_path == '' else args.result_path
 
 	# docker volumes
-	volumes = {"$HOME/.ccache": {"bind":"/root/.ccache"}, 
+	volumes = {f"{Path.home()}/.ccache": {"bind":"/root/.ccache"}, 
 			   path: {"bind":"/opt/shogun"}}
 
 	# if image doesn't exist build it
@@ -62,7 +63,9 @@ def main(args):
 	# if container hasn't been started yet start it here
 	if IMAGE_NAME not in [container.image.tags[0] for container in client.containers.list()]:
 		print("Starting container")
-		container = client.containers.start(img.short_id, command=f"bash -c '{SETUP_CMD}'", volumes=volumes, name=container_name)
+		container = client.containers.create(img.short_id, volumes=volumes, name=container_name, detach=True, tty=True)
+		container.start()
+		container.exec_run(cmd=f"bash -c '{SETUP_CMD}'")
 	else:
 		print("Getting container")
 		container_id = next(container.id for container in client.containers.list() if container.image.tags[0]==IMAGE_NAME)
