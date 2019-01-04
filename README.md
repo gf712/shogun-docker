@@ -3,8 +3,9 @@ A simple python script to test [Shogun](https://github.com/shogun-toolbox/shogun
 
 ## Usage
 ```
-cmake_configs.py shogun-memory-test --path LOCAL_SHOGUN_PATH --result-path PATH_TO_STORE_RESULTS
+cmake_configs.py config.yml --path LOCAL_SHOGUN_PATH --result-path PATH_TO_STORE_RESULTS
 ```
+The cmake flags to run for each build are stored in a YAML file (only need to have a name and the cmake flags, see config.yml)
 
 The first time the script runs will take longer as it builds the Docker image.
 

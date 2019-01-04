@@ -4,6 +4,7 @@ import docker
 import os
 import time
 from pathlib import Path
+import yaml
 
 # argument parsing
 parser = argparse.ArgumentParser(description=
@@ -14,7 +15,9 @@ parser = argparse.ArgumentParser(description=
 	The Dockerfile of this project is the same one as the official shogun
 	Dockerfile, but also includes valgrind.
 	""")
-parser.add_argument('container', type=str, nargs=1,
+parser.add_argument('config_file', type=str, nargs=1,
+                    help='YAML configuration file with cmake flags')
+parser.add_argument('--container', type=str, nargs='?', default="shogun-memory",
                     help='name of docker container')
 parser.add_argument('--path', type=str, nargs='?', default='./',
                     help='local path to shogun')
@@ -22,10 +25,6 @@ parser.add_argument('--result_path', type=str, nargs='?', default='',
                     help='path where logs will be stored')
 parser.add_argument('--gtest_filter', type=str, nargs='?', default='*',
                     help="gtest_filter argument passed on to gtest when running valgrind")
-
-# cmake configs
-CMAKE_CONFIG = ["-DCMAKE_BUILD_TYPE=Debug -DBUILD_META_EXAMPLES=ON -DENABLE_ASAN=ON -DENABLE_MSAN=ON -DENABLE_TSAN=ON -DENABLE_UBSAN=ON",
-				"-DCMAKE_BUILD_TYPE=Debug -DBUILD_META_EXAMPLES=ON"]
 
 NAME = "shogun-memory-test"
 VERSION = 0.1
@@ -48,11 +47,12 @@ def write_to_file(file, output, mode):
 
 def main(client, args):
 	path = args.path
-	container_name = args.container[0]
+	container_name = args.container
 	# generate name of directory to store results
 	result_path = f"build-{int(time.time())}" if args.result_path == '' else args.result_path
 	current_dir = os.path.abspath('./')
 	gtest_filter = args.gtest_filter
+	yaml_config_file = args.config_file[0]
 
 	# if image doesn't exist build it
 	if IMAGE_NAME not in [img.tags[0] for img in client.images.list()]:
@@ -65,11 +65,16 @@ def main(client, args):
 
 	os.mkdir(result_path)
 
-	for i, cmake_config in enumerate(CMAKE_CONFIG):
+	configs = yaml.load(open(yaml_config_file, 'r'))['configs']
 
-		print(f"CONFIGURATION {i}")
+	for config in configs:
 
-		result_path_i = f"{current_dir}/{result_path}/config-{i}"
+		config_name = config["name"]
+		cmake_config = config["config"]
+
+		print(f"CONFIGURATION: '{config_name}'")
+
+		result_path_i = f"{current_dir}/{result_path}/config-{config_name}"
 
 		os.mkdir(result_path_i)
 		os.mkdir(f"{result_path_i}/build")
@@ -128,7 +133,7 @@ if __name__ == '__main__':
 	except:
 		print("Stopping and deleting docker container...")
 		try:
-			container = client.containers.get(args.container[0])
+			container = client.containers.get(args.container)
 			container.stop()
 			container.remove()
 		except Exception as e:
