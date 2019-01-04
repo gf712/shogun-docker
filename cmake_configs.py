@@ -30,79 +30,103 @@ VERSION = 0.1
 IMAGE_NAME = f"{NAME}:{VERSION}"
 
 # bash commands
-SETUP_CMD = "mkdir -p /opt/shogun/build"
-CMAKE_CMD = "cd /opt/shogun/build; rm -rf *; cmake -DCMAKE_INSTALL_PREFIX=$HOME/shogun-build -DENABLE_TESTING=ON {} .."
-BUILD_CMD = "cd /opt/shogun/build; make -j4"
-VALGRIND_CMD = "cd /opt/shogun/build; valgrind --leak-check=full bin/shogun-unit-test"
+SETUP_CMD = "mkdir -p /opt/shogun"
+CMAKE_CMD = "cd {}; rm -rf *; cmake -DCMAKE_INSTALL_PREFIX=$HOME/shogun-build -DENABLE_TESTING=ON {} /opt/shogun"
+BUILD_CMD = "cd {}; make -j4"
+VALGRIND_CMD = "cd {}; valgrind --leak-check=full bin/shogun-unit-test"
+CLEANUP_CMD = "rm -rf {}"
 
-def write_to_file(file, stream, mode):
+def write_to_file(file, output, mode):
+	code = output[0]
+	stream = output[1]
 	with open(file, mode) as f:
 		for line in stream:
 			f.write(line)
 			f.flush()
 
-def main(args):
-	client = docker.from_env()
+def main(client, args):
 	path = args.path
 	container_name = args.container[0]
 	# generate name of directory to store results
 	result_path = f"build-{int(time.time())}" if args.result_path == '' else args.result_path
-
-	# docker volumes
-	volumes = {f"{Path.home()}/.ccache": {"bind":"/root/.ccache"}, 
-			   path: {"bind":"/opt/shogun"}}
+	current_dir = os.path.abspath('./')
 
 	# if image doesn't exist build it
 	if IMAGE_NAME not in [img.tags[0] for img in client.images.list()]:
 		print("Building image...")
-		img = client.images.build(path=os.path.abspath('./'), tag=IMAGE_NAME)[0]
+		img, logs = client.images.build(path=current_dir, tag=IMAGE_NAME, rm=True)
+
 	else:
 		print("Getting image locally")
 		img = client.images.get(IMAGE_NAME)
 
-	# if container hasn't been started yet start it here
-	if IMAGE_NAME not in [container.image.tags[0] for container in client.containers.list()]:
-		print("Starting container")
-		container = client.containers.create(img.short_id, volumes=volumes, name=container_name, detach=True, tty=True)
-		container.start()
-		container.exec_run(cmd=f"bash -c '{SETUP_CMD}'")
-	else:
-		print("Getting container")
-		container_id = next(container.id for container in client.containers.list() if container.image.tags[0]==IMAGE_NAME)
-		container = client.containers.get(container_id)
-		if container.name != container_name:
-			container.rename(container_name)
-
 	os.mkdir(result_path)
 
-	# run each cmake config
 	for i, cmake_config in enumerate(CMAKE_CONFIG):
+
 		print(f"CONFIGURATION {i}")
 
-		result_path_i = f"{result_path}/config-{i}"
+		result_path_i = f"{current_dir}/{result_path}/config-{i}"
 
 		os.mkdir(result_path_i)
+		os.mkdir(f"{result_path_i}/build")
+		mount_build_path = f"/opt/{result_path}/build"
 
-		write_to_file(os.path.join(result_path_i, "cmake_config.txt"), [cmake_config, '\n'], 'w')
-		
-		print("Running cmake step", end="", flush=True)
-		start = time.time()
-		cmake_logs = container.exec_run(cmd=f"bash -c '{CMAKE_CMD.format(cmake_config)}'", stream=True)
-		write_to_file(os.path.join(result_path_i, "cmake_output.txt"), cmake_logs.output, 'wb')
-		print(f" [time: {time.time() - start:.2f} s]")
-		
-		print("Running build step", end="", flush=True)
-		start = time.time()
-		build_logs = container.exec_run(cmd=f"bash -c '{BUILD_CMD}'", stream=True)
-		write_to_file(os.path.join(result_path_i, "build_output.txt"), build_logs.output, 'wb')
-		print(f" [time: {time.time() - start:.2f} s]")
+		# docker volumes
+		volumes = {f"{Path.home()}/.ccache": {"bind":"/root/.ccache"}, 
+				   path: {"bind":"/opt/shogun"},
+				   f"{result_path_i}/build":{"bind":mount_build_path}
+				   }
 
-		print("Running valgrind test", end="", flush=True)
+		# if container hasn't been started yet start it here
+		print("Starting container")
+		try:
+			container = client.containers.create(img.short_id, volumes=volumes, name=container_name, detach=True, tty=True)
+		except Exception as e:
+			print(f"An error occured whilst creating the container:\n{e}\nAborting.")
+			return
+		container.start()
+		container.exec_run(cmd=f"bash -c '{SETUP_CMD}'")
+
+		write_to_file(os.path.join(result_path_i, "cmake_config.txt"), (0, [cmake_config, '\n']), 'w')
+		
+		print("Running cmake step...", end=" ", flush=True)
 		start = time.time()
-		valgrind_logs = container.exec_run(cmd=f"bash -c '{VALGRIND_CMD}'", stream=True)
-		write_to_file(os.path.join(result_path_i, "valgrind_output.txt"), valgrind_logs.output, 'wb')
-		print(f" [time: {time.time() - start:.2f} s]")
+		cmake_logs = container.exec_run(cmd=f"bash -c '{CMAKE_CMD.format(mount_build_path, cmake_config)}'", stream=True)
+		write_to_file(os.path.join(result_path_i, "cmake_output.txt"), cmake_logs, 'wb')
+		print(f"[time: {time.time() - start:.2f} s]")
+		
+		print("Running build step...", end=" ", flush=True)
+		start = time.time()
+		build_logs = container.exec_run(cmd=f"bash -c '{BUILD_CMD.format(mount_build_path)}'", stream=True)
+		write_to_file(os.path.join(result_path_i, "build_output.txt"), build_logs, 'wb')
+		print(f"[time: {time.time() - start:.2f} s]")
+
+		print("Running valgrind step...", end=" ", flush=True)
+		start = time.time()
+		valgrind_logs = container.exec_run(cmd=f"bash -c '{VALGRIND_CMD.format(mount_build_path)}'", stream=True)
+		write_to_file(os.path.join(result_path_i, "valgrind_output.txt"), valgrind_logs, 'wb')
+		print(f"[time: {time.time() - start:.2f} s]")
+
+		print("Running clean up step...", end=" ", flush=True)
+		start = time.time()
+		container.exec_run(cmd=f"bash -c '{CLEANUP_CMD.format(mount_build_path)}'")
+		print(f"[time: {time.time() - start:.2f} s]")
+
+		container.stop()
+		container.remove()
 
 if __name__ == '__main__':
 	args = parser.parse_args()
-	main(args)
+	client = docker.from_env()
+
+	try:
+		main(client, args)
+	except:
+		print("Stopping and deleting docker container...")
+		try:
+			container = client.containers.get(args.container[0])
+			container.stop()
+			container.remove()
+		except Exception as e:
+			print("Could not stop and delete container", e)
