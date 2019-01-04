@@ -20,6 +20,8 @@ parser.add_argument('--path', type=str, nargs='?', default='./',
                     help='local path to shogun')
 parser.add_argument('--result_path', type=str, nargs='?', default='',
                     help='path where logs will be stored')
+parser.add_argument('--gtest_filter', type=str, nargs='?', default='*',
+                    help="gtest_filter argument passed on to gtest when running valgrind")
 
 # cmake configs
 CMAKE_CONFIG = ["-DCMAKE_BUILD_TYPE=Debug -DBUILD_META_EXAMPLES=ON -DENABLE_ASAN=ON -DENABLE_MSAN=ON -DENABLE_TSAN=ON -DENABLE_UBSAN=ON",
@@ -33,7 +35,7 @@ IMAGE_NAME = f"{NAME}:{VERSION}"
 SETUP_CMD = "mkdir -p /opt/shogun"
 CMAKE_CMD = "cd {}; rm -rf *; cmake -DCMAKE_INSTALL_PREFIX=$HOME/shogun-build -DENABLE_TESTING=ON {} /opt/shogun"
 BUILD_CMD = "cd {}; make -j4"
-VALGRIND_CMD = "cd {}; valgrind --leak-check=full bin/shogun-unit-test"
+VALGRIND_CMD = "cd {}; valgrind --leak-check=full bin/shogun-unit-test --gtest_filter={}"
 CLEANUP_CMD = "rm -rf {}"
 
 def write_to_file(file, output, mode):
@@ -50,10 +52,11 @@ def main(client, args):
 	# generate name of directory to store results
 	result_path = f"build-{int(time.time())}" if args.result_path == '' else args.result_path
 	current_dir = os.path.abspath('./')
+	gtest_filter = args.gtest_filter
 
 	# if image doesn't exist build it
 	if IMAGE_NAME not in [img.tags[0] for img in client.images.list()]:
-		print("Building image...")
+		print("Building image (could take a while)...")
 		img, logs = client.images.build(path=current_dir, tag=IMAGE_NAME, rm=True)
 
 	else:
@@ -104,7 +107,7 @@ def main(client, args):
 
 		print("Running valgrind step...", end=" ", flush=True)
 		start = time.time()
-		valgrind_logs = container.exec_run(cmd=f"bash -c '{VALGRIND_CMD.format(mount_build_path)}'", stream=True)
+		valgrind_logs = container.exec_run(cmd=f"bash -c '{VALGRIND_CMD.format(mount_build_path, gtest_filter)}'", stream=True)
 		write_to_file(os.path.join(result_path_i, "valgrind_output.txt"), valgrind_logs, 'wb')
 		print(f"[time: {time.time() - start:.2f} s]")
 
@@ -129,4 +132,4 @@ if __name__ == '__main__':
 			container.stop()
 			container.remove()
 		except Exception as e:
-			print("Could not stop and delete container", e)
+			print(f"Could not stop and delete container.\n{e}")
