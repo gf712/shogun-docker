@@ -63,7 +63,10 @@ def main(client, args):
 		print("Getting image locally")
 		img = client.images.get(IMAGE_NAME)
 
-	os.mkdir(result_path)
+	try:
+		os.mkdir(result_path)
+	except FileExistsError: 
+		pass
 
 	configs = yaml.load(open(yaml_config_file, 'r'))['configs']
 
@@ -130,7 +133,8 @@ if __name__ == '__main__':
 
 	try:
 		main(client, args)
-	except:
+	except Exception as e:
+		print(f"An error occured:\n{e}")
 		print("Stopping and deleting docker container...")
 		try:
 			container = client.containers.get(args.container)
