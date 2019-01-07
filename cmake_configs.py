@@ -39,7 +39,7 @@ IMAGE_NAME = f"{NAME}:{VERSION}"
 
 # bash commands
 SETUP_CMD = "mkdir -p /opt/shogun; CCACHE_DIR=/shogun-ccache"
-CMAKE_CMD = "cd {}; rm -rf *; cmake -DCMAKE_INSTALL_PREFIX=$HOME/shogun-build -DENABLE_TESTING=ON {} /opt/shogun"
+CMAKE_CMD = "cd {}; cmake -DCMAKE_INSTALL_PREFIX=$HOME/shogun-build -DENABLE_TESTING=ON {} /opt/shogun"
 BUILD_CMD = "cd {}; make -j4"
 VALGRIND_CMD = "cd {}; valgrind --leak-check=full bin/shogun-unit-test --gtest_filter={}"
 CLEANUP_CMD = "rm -rf {}"
@@ -120,7 +120,7 @@ def main(client, args):
 				container = client.containers.get(container_name)
 				container.stop()
 				container.remove()
-				container = client.containers.create(img.short_id, mounts=mounts, name=container_name, detach=True, tty=True)
+				container = client.containers.create(img.short_id, mounts=mounts, name=container_name, detach=True, tty=True,  tmpfs=tmpfs)
 			elif answer=='n' or answer=='':
 				print("Aborting.")
 				return
