@@ -25,8 +25,13 @@ parser.add_argument('--result_path', type=str, nargs='?', default='',
 					help='path where logs will be stored')
 parser.add_argument('--gtest_filter', type=str, nargs='?', default='*',
 					help="gtest_filter argument passed on to gtest when running valgrind")
-parser.add_argument('--keep_build', type=bool, nargs='?', default=False,
-					help="whether to keep the build files. If not required should keep default value, as it may lead to performance gains")
+keep_build_parser = parser.add_mutually_exclusive_group(required=False)
+keep_build_parser.add_argument('--keep_build', dest='keep_build', 
+								action='store_true', 
+								help="keep build. Requires bindings between host and container, which can slow down build time.")
+keep_build_parser.add_argument('--discard_build', dest='keep_build', action='store_false',
+								help="[EXPERIMENTAL] do not keep build. Uses a temporary directory (with docker's tmpfs), which improves build time.")
+parser.set_defaults(feature=True)
 
 NAME = "shogun-memory-test"
 VERSION = 0.1
