@@ -93,14 +93,6 @@ def main(client, args):
 		os.mkdir(result_path_i)
 		mount_build_path = f"/opt/{result_path}/build"
 
-		build_mount_type = 'bind' if keep_build else 'tmpfs'
-
-		if keep_build:
-			os.mkdir(f"{result_path_i}/build")
-			build_source = f"{result_path_i}/build"
-		else:
-			build_source = ""
-
 		# build or get ccache volume
 		try:
 			ccache_volume = client.volumes.get("shogun-ccache")
@@ -110,12 +102,18 @@ def main(client, args):
 		mounts = [
 			docker.types.Mount(target="/root/.ccache", source=ccache_volume.id, type="volume"),
 			docker.types.Mount(target="/opt/shogun", source=path, type='bind'),
-			docker.types.Mount(target=mount_build_path, source=build_source, type=build_mount_type)
 		]
+
+		if keep_build:
+			os.mkdir(f"{result_path_i}/build")
+			mounts.append(docker.types.Mount(target=mount_build_path, source=f"{result_path_i}/build", type='bind'))
+			tmpfs = {}
+		else:
+			tmpfs = {mount_build_path: 'exec'}
 
 		print("Starting container")
 		try:
-			container = client.containers.create(img.short_id, mounts=mounts, name=container_name, detach=True, tty=True)
+			container = client.containers.create(img.short_id, mounts=mounts, name=container_name, detach=True, tty=True, tmpfs=tmpfs)
 		except docker.errors.APIError:
 			answer = input(f"A container named '{container_name}' already exists. Would you like to stop and delete it? [y/N] ").lower()
 			if answer == 'y':
