@@ -31,7 +31,7 @@ keep_build_parser.add_argument('--keep_build', dest='keep_build',
 								help="keep build. Requires bindings between host and container, which can slow down build time.")
 keep_build_parser.add_argument('--discard_build', dest='keep_build', action='store_false',
 								help="[EXPERIMENTAL] do not keep build. Uses a temporary directory (with docker's tmpfs), which improves build time.")
-parser.set_defaults(feature=True)
+parser.set_defaults(keep_build=True)
 
 NAME = "shogun-memory-test"
 VERSION = 0.1
