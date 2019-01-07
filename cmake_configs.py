@@ -16,34 +16,39 @@ parser = argparse.ArgumentParser(description=
 	Dockerfile, but also includes valgrind.
 	""")
 parser.add_argument('config_file', type=str, nargs=1,
-                    help='YAML configuration file with cmake flags')
+					help='YAML configuration file with cmake flags')
 parser.add_argument('--container', type=str, nargs='?', default="shogun-memory",
-                    help='name of docker container')
+					help='name of docker container')
 parser.add_argument('--path', type=str, nargs='?', default='./',
-                    help='local path to shogun')
+					help='local path to shogun')
 parser.add_argument('--result_path', type=str, nargs='?', default='',
-                    help='path where logs will be stored')
+					help='path where logs will be stored')
 parser.add_argument('--gtest_filter', type=str, nargs='?', default='*',
-                    help="gtest_filter argument passed on to gtest when running valgrind")
+					help="gtest_filter argument passed on to gtest when running valgrind")
+parser.add_argument('--keep_build', type=bool, nargs='?', default=False,
+					help="whether to keep the build files. If not required should keep default value, as it may lead to performance gains")
 
 NAME = "shogun-memory-test"
 VERSION = 0.1
 IMAGE_NAME = f"{NAME}:{VERSION}"
 
 # bash commands
-SETUP_CMD = "mkdir -p /opt/shogun"
+SETUP_CMD = "mkdir -p /opt/shogun; CCACHE_DIR=/shogun-ccache"
 CMAKE_CMD = "cd {}; rm -rf *; cmake -DCMAKE_INSTALL_PREFIX=$HOME/shogun-build -DENABLE_TESTING=ON {} /opt/shogun"
 BUILD_CMD = "cd {}; make -j4"
 VALGRIND_CMD = "cd {}; valgrind --leak-check=full bin/shogun-unit-test --gtest_filter={}"
 CLEANUP_CMD = "rm -rf {}"
 
-def write_to_file(file, output, mode):
+def write_to_file(file, output, mode, timeit=True):
 	code = output[0]
 	stream = output[1]
+	start = time.time()	
 	with open(file, mode) as f:
 		for line in stream:
 			f.write(line)
 			f.flush()
+	if timeit:
+		print(f"[time: {time.time() - start:.2f} s]")
 
 def main(client, args):
 	path = args.path
@@ -53,6 +58,7 @@ def main(client, args):
 	current_dir = os.path.abspath('./')
 	gtest_filter = args.gtest_filter
 	yaml_config_file = args.config_file[0]
+	keep_build = args.keep_build
 
 	# if image doesn't exist build it
 	if IMAGE_NAME not in [img.tags[0] for img in client.images.list()]:
@@ -65,7 +71,7 @@ def main(client, args):
 
 	try:
 		os.mkdir(result_path)
-	except FileExistsError: 
+	except FileExistsError:
 		pass
 
 	configs = yaml.load(open(yaml_config_file, 'r'))['configs']
@@ -80,49 +86,66 @@ def main(client, args):
 		result_path_i = f"{current_dir}/{result_path}/config-{config_name}"
 
 		os.mkdir(result_path_i)
-		os.mkdir(f"{result_path_i}/build")
 		mount_build_path = f"/opt/{result_path}/build"
 
-		# docker volumes
-		volumes = {f"{Path.home()}/.ccache": {"bind":"/root/.ccache"}, 
-				   path: {"bind":"/opt/shogun"},
-				   f"{result_path_i}/build":{"bind":mount_build_path}
-				   }
+		build_mount_type = 'bind' if keep_build else 'tmpfs'
 
-		# if container hasn't been started yet start it here
+		if keep_build:
+			os.mkdir(f"{result_path_i}/build")
+			build_source = f"{result_path_i}/build"
+		else:
+			build_source = ""
+
+		# build or get ccache volume
+		try:
+			ccache_volume = client.volumes.get("shogun-ccache")
+		except docker.errors.NotFound:
+			ccache_volume = client.volumes.create("shogun-ccache")
+
+		mounts = [
+			docker.types.Mount(target="/root/.ccache", source=ccache_volume.id, type="volume"),
+			docker.types.Mount(target="/opt/shogun", source=path, type='bind'),
+			docker.types.Mount(target=mount_build_path, source=build_source, type=build_mount_type)
+		]
+
 		print("Starting container")
 		try:
-			container = client.containers.create(img.short_id, volumes=volumes, name=container_name, detach=True, tty=True)
+			container = client.containers.create(img.short_id, mounts=mounts, name=container_name, detach=True, tty=True)
+		except docker.errors.APIError:
+			answer = input(f"A container named '{container_name}' already exists. Would you like to stop and delete it? [y/N] ").lower()
+			if answer == 'y':
+				container = client.containers.get(container_name)
+				container.stop()
+				container.remove()
+				container = client.containers.create(img.short_id, mounts=mounts, name=container_name, detach=True, tty=True)
+			elif answer=='n' or answer=='':
+				print("Aborting.")
+				return
+			else:
+				print('Invalid answer.')
+				return
 		except Exception as e:
 			print(f"An error occured whilst creating the container:\n{e}\nAborting.")
 			return
 		container.start()
 		container.exec_run(cmd=f"bash -c '{SETUP_CMD}'")
 
-		write_to_file(os.path.join(result_path_i, "cmake_config.txt"), (0, [cmake_config, '\n']), 'w')
+		write_to_file(os.path.join(result_path_i, "cmake_config.txt"), (0, [cmake_config, '\n']), 'w', timeit=False)
 		
 		print("Running cmake step...", end=" ", flush=True)
-		start = time.time()
 		cmake_logs = container.exec_run(cmd=f"bash -c '{CMAKE_CMD.format(mount_build_path, cmake_config)}'", stream=True)
 		write_to_file(os.path.join(result_path_i, "cmake_output.txt"), cmake_logs, 'wb')
-		print(f"[time: {time.time() - start:.2f} s]")
 		
 		print("Running build step...", end=" ", flush=True)
-		start = time.time()
 		build_logs = container.exec_run(cmd=f"bash -c '{BUILD_CMD.format(mount_build_path)}'", stream=True)
 		write_to_file(os.path.join(result_path_i, "build_output.txt"), build_logs, 'wb')
-		print(f"[time: {time.time() - start:.2f} s]")
 
 		print("Running valgrind step...", end=" ", flush=True)
-		start = time.time()
 		valgrind_logs = container.exec_run(cmd=f"bash -c '{VALGRIND_CMD.format(mount_build_path, gtest_filter)}'", stream=True)
 		write_to_file(os.path.join(result_path_i, "valgrind_output.txt"), valgrind_logs, 'wb')
-		print(f"[time: {time.time() - start:.2f} s]")
 
 		print("Running clean up step...", end=" ", flush=True)
-		start = time.time()
 		container.exec_run(cmd=f"bash -c '{CLEANUP_CMD.format(mount_build_path)}'")
-		print(f"[time: {time.time() - start:.2f} s]")
 
 		container.stop()
 		container.remove()
@@ -133,7 +156,7 @@ if __name__ == '__main__':
 
 	try:
 		main(client, args)
-	except Exception as e:
+	except BaseException as e:
 		print(f"An error occured:\n{e}")
 		print("Stopping and deleting docker container...")
 		try:
