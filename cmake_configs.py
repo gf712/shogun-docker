@@ -25,12 +25,14 @@ parser.add_argument('--result_path', type=str, nargs='?', default='',
 					help='path where logs will be stored')
 parser.add_argument('--gtest_filter', type=str, nargs='?', default='*',
 					help="gtest_filter argument passed on to gtest when running valgrind")
+parser.add_argument('--n_jobs', type=str, nargs='?', default=4,
+					help="number of parallel jobs used by make")
 keep_build_parser = parser.add_mutually_exclusive_group(required=False)
 keep_build_parser.add_argument('--keep_build', dest='keep_build', 
 								action='store_true', 
 								help="keep build. Requires bindings between host and container, which can slow down build time.")
 keep_build_parser.add_argument('--discard_build', dest='keep_build', action='store_false',
-								help="[EXPERIMENTAL] do not keep build. Uses a temporary directory (with docker's tmpfs), which improves build time.")
+								help="[EXPERIMENTAL] discard build. Uses a temporary directory (with docker's tmpfs), which improves build time.")
 parser.set_defaults(keep_build=True)
 
 NAME = "shogun-memory-test"
@@ -40,7 +42,7 @@ IMAGE_NAME = f"{NAME}:{VERSION}"
 # bash commands
 SETUP_CMD = "mkdir -p /opt/shogun; CCACHE_DIR=/shogun-ccache"
 CMAKE_CMD = "cd {}; cmake -DCMAKE_INSTALL_PREFIX=$HOME/shogun-build -DENABLE_TESTING=ON {} /opt/shogun"
-BUILD_CMD = "cd {}; make -j4"
+BUILD_CMD = "cd {}; make -j{}"
 VALGRIND_CMD = "cd {}; valgrind --leak-check=full bin/shogun-unit-test --gtest_filter={}"
 CLEANUP_CMD = "rm -rf {}"
 
@@ -64,6 +66,7 @@ def main(client, args):
 	gtest_filter = args.gtest_filter
 	yaml_config_file = args.config_file[0]
 	keep_build = args.keep_build
+	n_jobs = args.n_jobs
 
 	# if image doesn't exist build it
 	if IMAGE_NAME not in [img.tags[0] for img in client.images.list()]:
@@ -113,15 +116,15 @@ def main(client, args):
 
 		print("Starting container")
 		try:
-			container = client.containers.create(img.short_id, mounts=mounts, name=container_name, detach=True, tty=True, tmpfs=tmpfs, mem_limit='8G', memswap_limit='12G')
+			container = client.containers.create(img.short_id, mounts=mounts, name=container_name, detach=True, tty=True, tmpfs=tmpfs, mem_limit='12G', memswap_limit='18G')
 		except docker.errors.APIError as e:
-			if e.response.status_code == 401:
+			if e.response.status_code == 409:
 				answer = input(f"A container named '{container_name}' already exists. Would you like to stop and delete it? [y/N] ").lower()
 				if answer == 'y':
 					container = client.containers.get(container_name)
 					container.stop()
 					container.remove()
-					container = client.containers.create(img.short_id, mounts=mounts, name=container_name, detach=True, tty=True,  tmpfs=tmpf, mem_limit='8G', memswap_limit='12G')
+					container = client.containers.create(img.short_id, mounts=mounts, name=container_name, detach=True, tty=True,  tmpfs=tmpfs, mem_limit='12G', memswap_limit='18G')
 				elif answer=='n' or answer=='':
 					print("Aborting.")
 					return
@@ -144,7 +147,7 @@ def main(client, args):
 		write_to_file(os.path.join(result_path_i, "cmake_output.txt"), cmake_logs, 'wb')
 		
 		print("Running build step...", end=" ", flush=True)
-		build_logs = container.exec_run(cmd=f"bash -c '{BUILD_CMD.format(mount_build_path)}'", stream=True)
+		build_logs = container.exec_run(cmd=f"bash -c '{BUILD_CMD.format(mount_build_path, n_jobs)}'", stream=True)
 		write_to_file(os.path.join(result_path_i, "build_output.txt"), build_logs, 'wb')
 
 		print("Running valgrind step...", end=" ", flush=True)
@@ -153,9 +156,9 @@ def main(client, args):
 
 		print("Running clean up step...", end=" ", flush=True)
 		container.exec_run(cmd=f"bash -c '{CLEANUP_CMD.format(mount_build_path)}'")
-
 		container.stop()
 		container.remove()
+		print("\n")
 
 if __name__ == '__main__':
 	args = parser.parse_args()
