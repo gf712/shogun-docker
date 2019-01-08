@@ -109,23 +109,27 @@ def main(client, args):
 			mounts.append(docker.types.Mount(target=mount_build_path, source=f"{result_path_i}/build", type='bind'))
 			tmpfs = {}
 		else:
-			tmpfs = {mount_build_path: 'exec'}
+			tmpfs = {mount_build_path: 'exec,size=5G'}
 
 		print("Starting container")
 		try:
-			container = client.containers.create(img.short_id, mounts=mounts, name=container_name, detach=True, tty=True, tmpfs=tmpfs)
-		except docker.errors.APIError:
-			answer = input(f"A container named '{container_name}' already exists. Would you like to stop and delete it? [y/N] ").lower()
-			if answer == 'y':
-				container = client.containers.get(container_name)
-				container.stop()
-				container.remove()
-				container = client.containers.create(img.short_id, mounts=mounts, name=container_name, detach=True, tty=True,  tmpfs=tmpfs)
-			elif answer=='n' or answer=='':
-				print("Aborting.")
-				return
+			container = client.containers.create(img.short_id, mounts=mounts, name=container_name, detach=True, tty=True, tmpfs=tmpfs, mem_limit='8G', memswap_limit='12G')
+		except docker.errors.APIError as e:
+			if e.response.status_code == 401:
+				answer = input(f"A container named '{container_name}' already exists. Would you like to stop and delete it? [y/N] ").lower()
+				if answer == 'y':
+					container = client.containers.get(container_name)
+					container.stop()
+					container.remove()
+					container = client.containers.create(img.short_id, mounts=mounts, name=container_name, detach=True, tty=True,  tmpfs=tmpf, mem_limit='8G', memswap_limit='12G')
+				elif answer=='n' or answer=='':
+					print("Aborting.")
+					return
+				else:
+					print('Invalid answer.')
+					return
 			else:
-				print('Invalid answer.')
+				print(f"An error occured whilst creating the container:\n{e}\nAborting.")
 				return
 		except Exception as e:
 			print(f"An error occured whilst creating the container:\n{e}\nAborting.")
